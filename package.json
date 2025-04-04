@@ -1,0 +1,9 @@
+{
+  "dependencies": {
+    "pdfjs-dist": "^5.1.91"
+  },
+  "devDependencies": {
+    "@types/node": "^22.14.0",
+    "typescript": "^5.8.2"
+  }
+}
