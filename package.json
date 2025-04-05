@@ -30,7 +30,7 @@
   },
   "homepage": "https://github.com/KazeFreeze/gcash-pdf-parser#readme",
   "dependencies": {
-    "pdfjs-dist": "^5.1.91"
+    "pdfjs-dist": "^5.0.375"
   },
   "devDependencies": {
     "@babel/core": "^7.26.10",
