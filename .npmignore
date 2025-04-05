@@ -1,0 +1,15 @@
+node_modules/
+src/
+tests/
+.git/
+.github/
+coverage/
+.vscode/
+.idea/
+*.log
+tsconfig.json
+jest.config.js
+webpack.config.js
+.gitignore
+.npmrc
+output/
