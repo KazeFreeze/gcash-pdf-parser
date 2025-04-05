@@ -1,3 +1,4 @@
+// src/parsers/GCashPDFParser.ts
 import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
 import * as fs from "fs";
 import * as path from "path";
@@ -23,13 +24,30 @@ interface ColumnInfo {
   maxX?: number;
 }
 
+interface HeaderEntry {
+  entryNo: number;
+  dateTime: string;
+  description: string;
+  referenceNo: string;
+}
+
+interface NumericEntry {
+  entryNo: number;
+  debit: string;
+  credit: string;
+  balance: string;
+}
+
 export class GCashPDFParser {
   private pdfData: ArrayBuffer;
   private password: string;
   private transactions: Transaction[] = [];
   private pageTexts: string[] = [];
   private outputDir: string;
+  // Column positions (used for both header and numeric columns)
   private columnPositions: ColumnInfo[] = [];
+  // Store numeric parts (Debit, Credit, Balance) from each valid transaction line
+  private numericEntries: NumericEntry[] = [];
 
   constructor(
     pdfData: ArrayBuffer,
@@ -43,12 +61,9 @@ export class GCashPDFParser {
   }
 
   private ensureDirectoriesExist(): void {
-    // Create output directory if it doesn't exist
     if (!fs.existsSync(this.outputDir)) {
       fs.mkdirSync(this.outputDir, { recursive: true });
     }
-
-    // Create subdirectories for different formats
     const formats = ["csv", "txt", "debug"];
     formats.forEach((format) => {
       const formatDir = path.join(this.outputDir, format);
@@ -67,50 +82,75 @@ export class GCashPDFParser {
 
       const pdf = await loadingTask.promise;
       this.transactions = [];
-      this.pageTexts = []; // Reset page texts
+      this.pageTexts = [];
+      this.numericEntries = [];
 
       // Process each page
       for (let i = 1; i <= pdf.numPages; i++) {
         const page = await pdf.getPage(i);
         const content = await page.getTextContent();
 
-        // Add position information to text items
+        // Enrich items with position data
         const items: TextItem[] = content.items.map((item: any) => {
           const transform = item.transform;
           return {
             str: item.str,
             dir: item.dir,
-            transform: item.transform,
+            transform: transform,
             width: item.width,
             height: item.height,
             fontName: item.fontName,
-            x: transform[4], // x-coordinate
-            y: transform[5], // y-coordinate
+            x: transform[4],
+            y: transform[5],
           };
         });
 
-        // Save raw items to debug file for inspection
+        // Save raw items for debugging
         this.saveRawItems(i, items);
 
-        // Look for header row to identify column positions (only on first page)
+        // Identify column positions on the first page
         if (i === 1) {
           this.identifyColumnPositions(items);
-          // Compute explicit boundaries for each column based on header positions.
           this.computeColumnBoundaries();
         }
 
-        // Create page text for debugging
+        // Save a concatenated version of the page text for header extraction later
         const pageText = items.map((item) => item.str).join(" ");
         this.pageTexts.push(pageText);
         this.savePageText(i, pageText);
 
-        // Extract transactions using positional information
-        this.extractTransactionsFromItems(items);
+        // Process numeric data (Debit, Credit, Balance) using the second code’s approach
+        this.extractNumericEntriesFromLineItems(items);
       }
 
-      // Save all extracted page texts to a single file
+      // Save all page texts to a debug file
       this.saveAllPageTexts();
 
+      // Extract header entries from combined page texts (for Date/Time, Description, Reference No)
+      const headerEntries = this.extractHeaderEntriesFromPageTexts();
+
+      // Merge header entries and numeric entries by matching entry numbers (by order)
+      const mergedTransactions: Transaction[] = [];
+      const entryCount = Math.min(
+        headerEntries.length,
+        this.numericEntries.length
+      );
+      for (let i = 0; i < entryCount; i++) {
+        mergedTransactions.push({
+          dateTime: headerEntries[i].dateTime,
+          description: headerEntries[i].description,
+          referenceNo: headerEntries[i].referenceNo,
+          debit: this.numericEntries[i].debit,
+          credit: this.numericEntries[i].credit,
+          balance: this.numericEntries[i].balance,
+        });
+      }
+      if (headerEntries.length !== this.numericEntries.length) {
+        console.warn(
+          "Warning: The number of header entries does not match the number of numeric entries."
+        );
+      }
+      this.transactions = mergedTransactions;
       return this.transactions;
     } catch (error) {
       throw new Error(`Failed to parse PDF: ${error}`);
@@ -118,7 +158,7 @@ export class GCashPDFParser {
   }
 
   private identifyColumnPositions(items: TextItem[]): void {
-    // Look for header row with column names
+    // Look for header row by matching common column names
     const headerRowIndex = items.findIndex(
       (item) =>
         item.str.includes("Date and Time") ||
@@ -129,8 +169,6 @@ export class GCashPDFParser {
     );
 
     if (headerRowIndex !== -1) {
-      // Find items that are likely to be header columns.
-      // Assume header items are on the same y-coordinate (or very close).
       const headerItems = items.filter((item) => {
         return (
           Math.abs(item.y! - items[headerRowIndex].y!) < 2 &&
@@ -144,25 +182,19 @@ export class GCashPDFParser {
           ].some((header) => item.str.includes(header))
         );
       });
-
       console.log(
         "Identified header items:",
         headerItems.map((i) => ({ str: i.str, x: i.x }))
       );
-
-      // Create column info based on header positions.
-      // If the first three headers are merged (e.g. "Date and Time   Description   Reference No"),
-      // they will be detected as one column which we later split.
       this.columnPositions = headerItems.map((item) => ({
         name: item.str.trim(),
         x: item.x!,
-        width: item.width!,
+        width: item.width || 0,
       }));
     } else {
       console.warn(
         "Could not identify column header row. Using default positions."
       );
-      // Define fallback column positions based on your knowledge of the PDF
       this.columnPositions = [
         { name: "Date and Time", x: 0, width: 150 },
         { name: "Description", x: 150, width: 250 },
@@ -174,13 +206,9 @@ export class GCashPDFParser {
     }
   }
 
-  // Compute boundaries for each column based on header positions.
-  // This creates minX and maxX values for each column.
+  // Compute boundaries (minX and maxX) based on header positions
   private computeColumnBoundaries(): void {
-    // Sort columns by x (left to right)
     this.columnPositions.sort((a, b) => a.x - b.x);
-
-    // Compute boundary midpoints between adjacent columns.
     const boundaries: number[] = [];
     for (let i = 0; i < this.columnPositions.length - 1; i++) {
       const current = this.columnPositions[i];
@@ -188,8 +216,6 @@ export class GCashPDFParser {
       const boundary = current.x + (next.x - current.x) / 2;
       boundaries.push(boundary);
     }
-
-    // Assign minX and maxX to each column.
     this.columnPositions.forEach((col, idx) => {
       const minX = idx === 0 ? 0 : boundaries[idx - 1];
       const maxX =
@@ -199,8 +225,6 @@ export class GCashPDFParser {
       col.minX = minX;
       col.maxX = maxX;
     });
-
-    // Save column positions with boundaries for debugging
     fs.writeFileSync(
       path.join(this.outputDir, "debug", "column_positions.json"),
       JSON.stringify(this.columnPositions, null, 2)
@@ -228,12 +252,15 @@ export class GCashPDFParser {
     );
   }
 
-  private extractTransactionsFromItems(items: TextItem[]): void {
-    // Group items by y-coordinate (roughly same line)
+  /**
+   * This method groups text items into lines and uses the second code’s splitting logic
+   * to extract the numeric columns (Debit, Credit, Balance). It does not extract the header
+   * columns here because those are extracted later via regex from the combined page texts.
+   */
+  private extractNumericEntriesFromLineItems(items: TextItem[]): void {
+    // Group items by similar y-coordinate
     const lineGroups = new Map<number, TextItem[]>();
-
     items.forEach((item) => {
-      // Round y-coordinate to group items on the same line
       const roundedY = Math.round(item.y! * 10) / 10;
       if (!lineGroups.has(roundedY)) {
         lineGroups.set(roundedY, []);
@@ -241,17 +268,17 @@ export class GCashPDFParser {
       lineGroups.get(roundedY)!.push(item);
     });
 
-    // Sort line groups by y-coordinate (top to bottom)
+    // Sort groups top-to-bottom (highest y first)
     const sortedLines = Array.from(lineGroups.entries())
-      .sort((a, b) => b[0] - a[0]) // higher y is higher on page
+      .sort((a, b) => b[0] - a[0])
       .map((entry) => entry[1]);
 
-    // Process each line
+    let numericEntryCount = this.numericEntries.length;
+    // For each line, split into “front” (header info) and “back” (numeric columns)
     for (const line of sortedLines) {
-      // Sort items in the line by x-coordinate
-      line.sort((a, b) => a.x! - b.x!);
-
+      // Concatenate line text (for filtering)
       const lineText = line.map((item) => item.str).join(" ");
+      // Skip known header or summary lines
       if (
         lineText.includes("Date and Time") ||
         lineText.includes("STARTING BALANCE") ||
@@ -263,22 +290,19 @@ export class GCashPDFParser {
         continue;
       }
 
-      // Check if this looks like a transaction line (based on a date/time pattern)
+      // Use a simple date/time pattern to check if this line is a transaction line
       const dateTimePattern = /\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2}\s+[AP]M/;
       if (!dateTimePattern.test(lineText)) {
         continue;
       }
 
-      // Find the "Debit" column position
+      // Determine the splitting point using the Debit column boundary.
       const debitColumn = this.columnPositions.find(
         (col) => col.name === "Debit"
       );
-      const debitX = debitColumn?.minX || 500; // Use 500 as fallback if not found
-
-      // Separate items into two groups: before Debit column and from Debit column onwards
+      const debitX = debitColumn?.minX || 500;
       const frontItems: TextItem[] = [];
       const backItems: TextItem[] = [];
-
       line.forEach((item) => {
         if (item.x! < debitX) {
           frontItems.push(item);
@@ -287,85 +311,35 @@ export class GCashPDFParser {
         }
       });
 
-      // Combine front items into one string
-      const frontText = frontItems
-        .map((item) => item.str)
-        .join(" ")
-        .trim();
-
-      // Initialize record for the numerical columns (Debit, Credit, Balance)
+      // Process the back items into numeric columns
       const colValues: Record<string, string[]> = {
         Debit: [],
         Credit: [],
         Balance: [],
       };
 
-      // Process the back items using positional information
       backItems.forEach((item) => {
         const xPos = item.x!;
-        // Find which column this item belongs to
-        const relevantColumns = this.columnPositions.filter(
-          (col) =>
-            col.name === "Debit" ||
-            col.name === "Credit" ||
-            col.name === "Balance"
+        const relevantColumns = this.columnPositions.filter((col) =>
+          ["Debit", "Credit", "Balance"].includes(col.name)
         );
-
         const col = relevantColumns.find(
           (col) => xPos >= (col.minX as number) && xPos < (col.maxX as number)
         );
-
         if (col && colValues[col.name]) {
           colValues[col.name].push(item.str);
         }
       });
 
-      // IMPROVED PARSING LOGIC:
-      // 1. Extract date and time using regex
-      let dateTime = "";
-      let description = "";
-      let referenceNo = "";
-
-      // Extract date and time from the beginning of the text
-      const dateTimeMatch = frontText.match(
-        /\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2}\s+[AP]M/
-      );
-      if (dateTimeMatch) {
-        dateTime = dateTimeMatch[0];
-
-        // 2. Extract the reference number (13 digits) from the end
-        const refNoMatch = frontText.match(/\d{13}$/);
-        if (refNoMatch) {
-          referenceNo = refNoMatch[0];
-
-          // 3. Everything in between is the description
-          // Calculate the start and end positions
-          const dateTimeEndPos = frontText.indexOf(dateTime) + dateTime.length;
-          const refNoStartPos = frontText.lastIndexOf(referenceNo);
-
-          // Extract and trim the description
-          if (refNoStartPos > dateTimeEndPos) {
-            description = frontText
-              .substring(dateTimeEndPos, refNoStartPos)
-              .trim();
-          }
-        } else {
-          // If no reference number found, everything after date/time is description
-          description = frontText.substring(dateTime.length).trim();
-        }
-      }
-
-      // Get the values for the numerical columns
       const debitStr = (colValues["Debit"] || []).join(" ").trim();
       const creditStr = (colValues["Credit"] || []).join(" ").trim();
       const balanceStr = (colValues["Balance"] || []).join(" ").trim();
 
-      // Create a new transaction object if the date/time is found
-      if (dateTime) {
-        this.transactions.push({
-          dateTime,
-          description,
-          referenceNo,
+      // Only treat this as a numeric row if at least one numeric column has data.
+      if (debitStr || creditStr || balanceStr) {
+        numericEntryCount++;
+        this.numericEntries.push({
+          entryNo: numericEntryCount,
           debit: debitStr,
           credit: creditStr,
           balance: balanceStr,
@@ -374,33 +348,55 @@ export class GCashPDFParser {
     }
   }
 
+  /**
+   * Extract header entries from the complete page texts.
+   * This method uses a regex pattern to match rows with:
+   *   (yyyy-mm-dd hh:mm AM)   (description)   (13-digit reference no)
+   * It returns an array of HeaderEntry objects.
+   */
+  private extractHeaderEntriesFromPageTexts(): HeaderEntry[] {
+    const combinedText = this.pageTexts.join("\n");
+    const headerEntries: HeaderEntry[] = [];
+    // Regex pattern with exactly three spaces between fields:
+    //   (\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2}\s+[AP]M)\s{3}(.+?)\s{3}(\d{13})
+    const pattern =
+      /(\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2}\s+[AP]M)\s{3}(.+?)\s{3}(\d{13})/g;
+    let match;
+    let entryNo = 0;
+    while ((match = pattern.exec(combinedText)) !== null) {
+      entryNo++;
+      headerEntries.push({
+        entryNo,
+        dateTime: match[1].trim(),
+        description: match[2].trim(),
+        referenceNo: match[3].trim(),
+      });
+    }
+    console.log(
+      `Extracted ${headerEntries.length} header entries from page texts.`
+    );
+    return headerEntries;
+  }
+
   toCSV(): string {
     if (this.transactions.length === 0) {
       return "No transactions found";
     }
-
-    // CSV header
     let csv = "Date and Time,Description,Reference No,Debit,Credit,Balance\n";
-
-    // Add each transaction as a CSV row
     this.transactions.forEach((transaction) => {
       csv += `"${transaction.dateTime}","${transaction.description}","${transaction.referenceNo}","${transaction.debit}","${transaction.credit}","${transaction.balance}"\n`;
     });
-
     return csv.trim();
   }
 
-  // Save CSV output to file
   saveCSV(filename: string = "transactions.csv"): string {
     const csvContent = this.toCSV();
     const csvDir = path.join(this.outputDir, "csv");
     const filePath = path.join(csvDir, filename);
-
     fs.writeFileSync(filePath, csvContent);
     return filePath;
   }
 
-  // Debug method to get raw page texts
   getPageTexts(): string[] {
     return this.pageTexts;
   }
