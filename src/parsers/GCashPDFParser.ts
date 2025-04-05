@@ -49,6 +49,16 @@ interface NumericEntry {
 }
 
 /**
+ * Configuration options for GCashPDFParser
+ */
+export interface GCashPDFParserOptions {
+  /** Directory to save output files (default: "output") */
+  outputDir?: string;
+  /** Enable debug output (default: false) */
+  debug?: boolean;
+}
+
+/**
  * Parser for GCash PDF statements that extracts transactions into a structured format
  */
 export class GCashPDFParser {
@@ -57,6 +67,7 @@ export class GCashPDFParser {
   private transactions: Transaction[] = [];
   private pageTexts: string[] = [];
   private outputDir: string;
+  private debug: boolean;
   private columnPositions: ColumnInfo[] = [];
   private numericEntries: NumericEntry[] = [];
 
@@ -65,17 +76,21 @@ export class GCashPDFParser {
    *
    * @param pdfData - The PDF file data as an ArrayBuffer
    * @param password - The password to decrypt the PDF
-   * @param outputDir - Directory to save output files (default: "output")
+   * @param options - Configuration options
    */
   constructor(
     pdfData: ArrayBuffer,
     password: string,
-    outputDir: string = "output"
+    options?: GCashPDFParserOptions
   ) {
     this.pdfData = pdfData;
     this.password = password;
-    this.outputDir = outputDir;
-    this.ensureDirectoriesExist();
+    this.outputDir = options?.outputDir || "output";
+    this.debug = options?.debug || false;
+
+    if (this.debug || options?.outputDir) {
+      this.ensureDirectoriesExist();
+    }
   }
 
   /**
@@ -86,7 +101,11 @@ export class GCashPDFParser {
       fs.mkdirSync(this.outputDir, { recursive: true });
     }
 
-    const formats = ["csv", "txt", "debug"];
+    const formats = ["csv", "txt"];
+    if (this.debug) {
+      formats.push("debug");
+    }
+
     formats.forEach((format) => {
       const formatDir = path.join(this.outputDir, format);
       if (!fs.existsSync(formatDir)) {
@@ -130,7 +149,9 @@ export class GCashPDFParser {
           };
         });
 
-        this.saveRawItems(i, items);
+        if (this.debug) {
+          this.saveRawItems(i, items);
+        }
 
         if (i === 1) {
           this.identifyColumnPositions(items);
@@ -139,12 +160,17 @@ export class GCashPDFParser {
 
         const pageText = items.map((item) => item.str).join(" ");
         this.pageTexts.push(pageText);
-        this.savePageText(i, pageText);
+
+        if (this.debug) {
+          this.savePageText(i, pageText);
+        }
 
         this.extractNumericEntriesFromLineItems(items);
       }
 
-      this.saveAllPageTexts();
+      if (this.debug) {
+        this.saveAllPageTexts();
+      }
 
       const headerEntries = this.extractHeaderEntriesFromPageTexts();
       const mergedTransactions: Transaction[] = [];
@@ -164,7 +190,7 @@ export class GCashPDFParser {
         });
       }
 
-      if (headerEntries.length !== this.numericEntries.length) {
+      if (headerEntries.length !== this.numericEntries.length && this.debug) {
         console.warn(
           "Warning: The number of header entries does not match the number of numeric entries."
         );
@@ -207,10 +233,12 @@ export class GCashPDFParser {
         );
       });
 
-      console.log(
-        "Identified header items:",
-        headerItems.map((i) => ({ str: i.str, x: i.x }))
-      );
+      if (this.debug) {
+        console.log(
+          "Identified header items:",
+          headerItems.map((i) => ({ str: i.str, x: i.x }))
+        );
+      }
 
       this.columnPositions = headerItems.map((item) => ({
         name: item.str.trim(),
@@ -218,9 +246,11 @@ export class GCashPDFParser {
         width: item.width || 0,
       }));
     } else {
-      console.warn(
-        "Could not identify column header row. Using default positions."
-      );
+      if (this.debug) {
+        console.warn(
+          "Could not identify column header row. Using default positions."
+        );
+      }
 
       this.columnPositions = [
         { name: "Date and Time", x: 0, width: 150 },
@@ -257,10 +287,12 @@ export class GCashPDFParser {
       col.maxX = maxX;
     });
 
-    fs.writeFileSync(
-      path.join(this.outputDir, "debug", "column_positions.json"),
-      JSON.stringify(this.columnPositions, null, 2)
-    );
+    if (this.debug) {
+      fs.writeFileSync(
+        path.join(this.outputDir, "debug", "column_positions.json"),
+        JSON.stringify(this.columnPositions, null, 2)
+      );
+    }
   }
 
   /**
@@ -270,6 +302,8 @@ export class GCashPDFParser {
    * @param items - Text items from the page
    */
   private saveRawItems(pageNum: number, items: TextItem[]): void {
+    if (!this.debug) return;
+
     const debugDir = path.join(this.outputDir, "debug");
     const filePath = path.join(debugDir, `page_${pageNum}_raw_items.json`);
     fs.writeFileSync(filePath, JSON.stringify(items, null, 2));
@@ -282,6 +316,8 @@ export class GCashPDFParser {
    * @param text - Extracted text from the page
    */
   private savePageText(pageNum: number, text: string): void {
+    if (!this.debug) return;
+
     const debugDir = path.join(this.outputDir, "debug");
     const filePath = path.join(debugDir, `page_${pageNum}.txt`);
     fs.writeFileSync(filePath, text);
@@ -291,6 +327,8 @@ export class GCashPDFParser {
    * Saves all extracted page texts combined
    */
   private saveAllPageTexts(): void {
+    if (!this.debug) return;
+
     const debugDir = path.join(this.outputDir, "debug");
     const filePath = path.join(debugDir, "all_pages.txt");
     fs.writeFileSync(
@@ -420,10 +458,22 @@ export class GCashPDFParser {
       });
     }
 
-    console.log(
-      `Extracted ${headerEntries.length} header entries from page texts.`
-    );
+    if (this.debug) {
+      console.log(
+        `Extracted ${headerEntries.length} header entries from page texts.`
+      );
+    }
+
     return headerEntries;
+  }
+
+  /**
+   * Gets the extracted transactions
+   *
+   * @returns Array of transactions
+   */
+  getTransactions(): Transaction[] {
+    return this.transactions;
   }
 
   /**
@@ -453,6 +503,12 @@ export class GCashPDFParser {
   saveCSV(filename: string = "transactions.csv"): string {
     const csvContent = this.toCSV();
     const csvDir = path.join(this.outputDir, "csv");
+
+    // Ensure the directory exists
+    if (!fs.existsSync(csvDir)) {
+      fs.mkdirSync(csvDir, { recursive: true });
+    }
+
     const filePath = path.join(csvDir, filename);
     fs.writeFileSync(filePath, csvContent);
     return filePath;

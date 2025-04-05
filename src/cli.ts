@@ -35,8 +35,8 @@ async function main() {
     console.log("Processing PDF file:", pdfFilePath);
     console.log("Output directory:", outputDir);
 
-    // Parse the PDF
-    const parser = new GCashPDFParser(arrayBuffer, password, outputDir);
+    // Parse the PDF - Fix: Pass options object instead of string
+    const parser = new GCashPDFParser(arrayBuffer, password, { outputDir });
     await parser.parse();
 
     // Save and output results

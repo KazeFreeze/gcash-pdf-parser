@@ -1,9 +1,42 @@
 {
+  "name": "gcash-pdf-parser",
+  "version": "1.0.0",
+  "description": "Extract GCash transaction data from PDF statements",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "jest",
+    "prepare": "npm run build"
+  },
+  "keywords": [
+    "gcash",
+    "pdf",
+    "parser",
+    "transaction",
+    "extract"
+  ],
+  "author": "Bernard G. Tapiru, Jr.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/KazeFreeze/gcash-pdf-parser.git"
+  },
+  "bugs": {
+    "url": "https://github.com/KazeFreeze/gcash-pdf-parser/issues"
+  },
+  "homepage": "https://github.com/KazeFreeze/gcash-pdf-parser#readme",
   "dependencies": {
     "pdfjs-dist": "^5.1.91"
   },
   "devDependencies": {
+    "@types/jest": "^29.5.5",
     "@types/node": "^22.14.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.1.1",
     "typescript": "^5.8.2"
-  }
+  },
+  "files": [
+    "dist/**/*"
+  ]
 }
