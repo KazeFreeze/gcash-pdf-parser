@@ -11,7 +11,7 @@ npm install gcash-pdf-parser
 Or directly from GitHub:
 
 ```bash
-npm install github:yourusername/gcash-pdf-parser
+npm install github:KazeFreeze/gcash-pdf-parser
 ```
 
 ## Features
