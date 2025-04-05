@@ -1,6 +1,6 @@
 {
   "name": "gcash-pdf-parser",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Extract GCash transaction data from PDF statements",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
