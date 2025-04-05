@@ -258,27 +258,39 @@ export class GCashPDFParser {
    * columns here because those are extracted later via regex from the combined page texts.
    */
   private extractNumericEntriesFromLineItems(items: TextItem[]): void {
-    // Group items by similar y-coordinate
-    const lineGroups = new Map<number, TextItem[]>();
-    items.forEach((item) => {
-      const roundedY = Math.round(item.y! * 10) / 10;
-      if (!lineGroups.has(roundedY)) {
-        lineGroups.set(roundedY, []);
+    // Sort items by y-coordinate descending (top of the page first)
+    const sortedItems = items.sort((a, b) => b.y! - a.y!);
+
+    // Cluster items into rows using a vertical tolerance
+    const tolerance = 5; // adjust as needed based on typical row height variance
+    const clusters: TextItem[][] = [];
+
+    sortedItems.forEach((item) => {
+      // Try to add the item to an existing cluster if its y is close enough.
+      let added = false;
+      for (const cluster of clusters) {
+        // Compare to the first item in the cluster
+        if (Math.abs(item.y! - cluster[0].y!) <= tolerance) {
+          cluster.push(item);
+          added = true;
+          break;
+        }
       }
-      lineGroups.get(roundedY)!.push(item);
+      if (!added) {
+        clusters.push([item]);
+      }
     });
 
-    // Sort groups top-to-bottom (highest y first)
-    const sortedLines = Array.from(lineGroups.entries())
-      .sort((a, b) => b[0] - a[0])
-      .map((entry) => entry[1]);
+    // Sort each cluster's items by x coordinate (left to right)
+    clusters.forEach((cluster) => {
+      cluster.sort((a, b) => a.x! - b.x!);
+    });
 
+    // Process each cluster (row) for numeric data
     let numericEntryCount = this.numericEntries.length;
-    // For each line, split into “front” (header info) and “back” (numeric columns)
-    for (const line of sortedLines) {
-      // Concatenate line text (for filtering)
+    for (const line of clusters) {
       const lineText = line.map((item) => item.str).join(" ");
-      // Skip known header or summary lines
+      // Skip lines that look like headers or summaries
       if (
         lineText.includes("Date and Time") ||
         lineText.includes("STARTING BALANCE") ||
@@ -296,13 +308,14 @@ export class GCashPDFParser {
         continue;
       }
 
-      // Determine the splitting point using the Debit column boundary.
+      // Use the Debit column boundary as the splitting point (computed earlier)
       const debitColumn = this.columnPositions.find(
         (col) => col.name === "Debit"
       );
       const debitX = debitColumn?.minX || 500;
       const frontItems: TextItem[] = [];
       const backItems: TextItem[] = [];
+
       line.forEach((item) => {
         if (item.x! < debitX) {
           frontItems.push(item);
@@ -311,7 +324,7 @@ export class GCashPDFParser {
         }
       });
 
-      // Process the back items into numeric columns
+      // Process the back items into numeric columns using boundaries from computeColumnBoundaries()
       const colValues: Record<string, string[]> = {
         Debit: [],
         Credit: [],
@@ -335,7 +348,7 @@ export class GCashPDFParser {
       const creditStr = (colValues["Credit"] || []).join(" ").trim();
       const balanceStr = (colValues["Balance"] || []).join(" ").trim();
 
-      // Only treat this as a numeric row if at least one numeric column has data.
+      // Only add the numeric entry if at least one numeric field has data.
       if (debitStr || creditStr || balanceStr) {
         numericEntryCount++;
         this.numericEntries.push({
