@@ -1,6 +1,6 @@
 {
   "name": "gcash-pdf-parser",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Extract GCash transaction data from PDF statements",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -30,7 +30,7 @@
   },
   "homepage": "https://github.com/KazeFreeze/gcash-pdf-parser#readme",
   "dependencies": {
-    "pdfjs-dist": "^5.0.375"
+    "pdfjs-dist": "5.0.375"
   },
   "devDependencies": {
     "@babel/core": "^7.26.10",
