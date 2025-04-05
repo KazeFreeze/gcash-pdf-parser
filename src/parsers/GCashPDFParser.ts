@@ -1,5 +1,27 @@
-import * as fs from "fs";
-import * as path from "path";
+import { GCashPDFParserOptions } from "../models/Options";
+
+// Dynamic import approach for Node.js modules
+let fs: any = null;
+let path: any = null;
+
+// Check if we're in a browser environment
+const isBrowser =
+  typeof window !== "undefined" && typeof window.document !== "undefined";
+
+// Only import these modules in Node.js environment
+if (!isBrowser) {
+  try {
+    // Using dynamic require to avoid breaking browser builds
+    fs = eval("require")("fs");
+    path = eval("require")("path");
+  } catch (e) {
+    // Silently fail - we'll check for null before using these
+    console.warn(
+      "fs and path modules could not be loaded (browser environment)"
+    );
+  }
+}
+
 import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
 import { Transaction } from "../models/Transaction";
 
@@ -49,16 +71,6 @@ interface NumericEntry {
 }
 
 /**
- * Configuration options for GCashPDFParser
- */
-export interface GCashPDFParserOptions {
-  /** Directory to save output files (default: "output") */
-  outputDir?: string;
-  /** Enable debug output (default: false) */
-  debug?: boolean;
-}
-
-/**
  * Parser for GCash PDF statements that extracts transactions into a structured format
  */
 export class GCashPDFParser {
@@ -88,7 +100,7 @@ export class GCashPDFParser {
     this.outputDir = options?.outputDir || "output";
     this.debug = options?.debug || false;
 
-    if (this.debug || options?.outputDir) {
+    if ((this.debug || options?.outputDir) && !isBrowser) {
       this.ensureDirectoriesExist();
     }
   }
@@ -97,6 +109,8 @@ export class GCashPDFParser {
    * Creates necessary output directories if they don't exist
    */
   private ensureDirectoriesExist(): void {
+    if (isBrowser || !fs) return; // Skip in browser environment
+
     if (!fs.existsSync(this.outputDir)) {
       fs.mkdirSync(this.outputDir, { recursive: true });
     }
@@ -302,7 +316,7 @@ export class GCashPDFParser {
    * @param items - Text items from the page
    */
   private saveRawItems(pageNum: number, items: TextItem[]): void {
-    if (!this.debug) return;
+    if (!this.debug || isBrowser || !fs || !path) return;
 
     const debugDir = path.join(this.outputDir, "debug");
     const filePath = path.join(debugDir, `page_${pageNum}_raw_items.json`);
@@ -316,7 +330,7 @@ export class GCashPDFParser {
    * @param text - Extracted text from the page
    */
   private savePageText(pageNum: number, text: string): void {
-    if (!this.debug) return;
+    if (!this.debug || isBrowser || !fs || !path) return;
 
     const debugDir = path.join(this.outputDir, "debug");
     const filePath = path.join(debugDir, `page_${pageNum}.txt`);
@@ -327,7 +341,7 @@ export class GCashPDFParser {
    * Saves all extracted page texts combined
    */
   private saveAllPageTexts(): void {
-    if (!this.debug) return;
+    if (!this.debug || isBrowser || !fs || !path) return;
 
     const debugDir = path.join(this.outputDir, "debug");
     const filePath = path.join(debugDir, "all_pages.txt");
@@ -502,6 +516,15 @@ export class GCashPDFParser {
    */
   saveCSV(filename: string = "transactions.csv"): string {
     const csvContent = this.toCSV();
+
+    // In browser environment, just return the filename
+    if (isBrowser || !fs || !path) {
+      console.warn(
+        "File system operations not available in browser environment"
+      );
+      return filename;
+    }
+
     const csvDir = path.join(this.outputDir, "csv");
 
     // Ensure the directory exists
@@ -513,7 +536,6 @@ export class GCashPDFParser {
     fs.writeFileSync(filePath, csvContent);
     return filePath;
   }
-
   /**
    * Gets the extracted text from all pages
    *

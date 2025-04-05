@@ -6,9 +6,12 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
+    "build:browser": "webpack",
+    "build:all": "npm run build && npm run build:browser",
     "test": "jest",
-    "prepare": "npm run build"
+    "prepare": "npm run build:all"
   },
+  "browser": "dist/browser/gcash-pdf-parser.min.js",
   "keywords": [
     "gcash",
     "pdf",
@@ -30,11 +33,19 @@
     "pdfjs-dist": "^5.1.91"
   },
   "devDependencies": {
+    "@babel/core": "^7.26.10",
+    "@babel/preset-env": "^7.26.9",
+    "@babel/preset-typescript": "^7.27.0",
     "@types/jest": "^29.5.5",
     "@types/node": "^22.14.0",
+    "babel-loader": "^10.0.0",
     "jest": "^29.7.0",
+    "path-browserify": "^1.0.1",
+    "terser-webpack-plugin": "^5.3.14",
     "ts-jest": "^29.1.1",
-    "typescript": "^5.8.2"
+    "typescript": "^5.8.2",
+    "webpack": "^5.98.0",
+    "webpack-cli": "^6.0.1"
   },
   "files": [
     "dist/**/*"

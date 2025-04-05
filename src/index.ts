@@ -1,10 +1,10 @@
-import {
-  GCashPDFParser,
-  GCashPDFParserOptions,
-} from "./parsers/GCashPDFParser";
+import { GCashPDFParser } from "./parsers/GCashPDFParser";
+import { GCashPDFParserOptions } from "./models/Options";
 import { Transaction } from "./models/Transaction";
 
-export { GCashPDFParser, GCashPDFParserOptions, Transaction };
+// Export the types for TypeScript users
+export { GCashPDFParser, GCashPDFParserOptions };
+export type { Transaction };
 
 /**
  * Parses a GCash Transaction History statement in PDF and extracts transaction data
